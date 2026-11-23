@@ -1,7 +1,7 @@
 {
   "id": "opencreator-commander",
   "name": "OpenCreator Commander",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A LAN-restricted file manager and interactive terminal authenticated with Creator 5 SSH accounts.",
   "author": "OpenCreator Community",
   "startup": [

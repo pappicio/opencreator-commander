@@ -95,7 +95,7 @@ def _save_protections():
     try:
         with open(temp, "w") as f:
             json.dump(sorted(_CUSTOM_PROTECTIONS), f, indent=2)
-            f.write("\\n")
+            f.write("\n")
         os.chmod(temp, 0o600)
         os.replace(temp, PROTECTION_PATH)
     finally:
@@ -424,7 +424,7 @@ class Handler(BaseHTTPRequestHandler):
                 temp_path = SETTINGS_PATH + ".tmp"
                 with open(temp_path, "w") as f:
                     json.dump(settings, f, indent=2)
-                    f.write("\\n")
+                    f.write("\n")
                 os.chmod(temp_path, 0o600)
                 os.replace(temp_path, SETTINGS_PATH)
                 return self.send_json(200, {"ok": True, "settings": settings})
@@ -448,7 +448,7 @@ class Handler(BaseHTTPRequestHandler):
                 temp_path = config_path + ".tmp"
                 with open(temp_path, "w") as f:
                     json.dump(values, f)
-                    f.write("\\n")
+                    f.write("\n")
                 os.chmod(temp_path, 0o600)
                 os.replace(temp_path, config_path)
                 return self.send_json(200, {"ok": True})
