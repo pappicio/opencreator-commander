@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenCreator Commander</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.5.0/xterm.css">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.5.0/xterm.js"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div id="login" class="login-screen">
+    <form id="login-form" class="login-card">
+      <div class="brand-mark">OC</div>
+      <h1>OpenCreator Commander</h1>
+      <p>Connect to your Creator 5</p>
+      <label for="username">SSH username</label>
+      <input id="username" type="text" autocomplete="username" required autofocus>
+      <label for="password">SSH password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <label class="remember-option"><input id="remember-username" type="checkbox"> Remember username on this browser</label>
+      <label class="remember-option"><input id="remember-password" type="checkbox"> Remember password on this browser</label>
+      <p class="security-note">Saving the password stores it unencrypted in this browser's local storage. Only enable this on a trusted, private computer.</p>
+      <button class="primary" type="submit">Connect</button>
+      <div id="login-error" class="error"></div>
+    </form>
+  </div>
+
+  <div id="app" class="app hidden">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark small">OC</span><strong>OpenCreator Commander</strong><span class="device">Creator 5</span></div>
+      <div class="top-actions"><span class="connection-dot"></span><span>Local connection</span><button id="logout" class="ghost">Lock</button></div>
+    </header>
+    <nav class="main-tabs">
+      <button class="main-tab active" data-view="explorer"><span>▤</span> Explorer</button>
+      <button class="main-tab" data-view="terminal"><span>›_</span> Terminal</button>
+    </nav>
+    <main>
+      <section id="explorer-view" class="view">
+        <div class="explorer-toolbar">
+          <button id="back" class="icon-btn" title="Back">←</button>
+          <button id="up" class="icon-btn" title="Parent directory">↑</button>
+          <button id="refresh" class="icon-btn" title="Refresh">↻</button>
+          <div class="path-wrap"><span>Path</span><input id="path" value="/" spellcheck="false"><button id="go-path">Go</button></div>
+          <button id="new-folder" class="toolbar-btn">＋ New folder</button>
+          <button id="upload" class="toolbar-btn primary">↑ Upload</button>
+          <input id="file-input" type="file" multiple hidden>
+        </div>
+        <div class="explorer-content" id="drop-zone">
+          <div class="file-heading"><div class="breadcrumbs" id="breadcrumbs"></div><div class="file-count" id="file-count"></div></div>
+          <div class="file-table-wrap">
+            <table class="file-table">
+              <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th>Permissions</th><th></th></tr></thead>
+              <tbody id="file-list"><tr><td colspan="6" class="empty">Connect to load files.</td></tr></tbody>
+            </table>
+          </div>
+          <div class="drop-overlay" id="drop-overlay"><div>＋</div><strong>Drop files to upload</strong><span>Files will be copied into the current directory</span></div>
+        </div>
+        <footer class="statusbar"><span id="current-status">Ready</span><span>Filesystem access: Creator 5</span></footer>
+      </section>
+
+      <section id="terminal-view" class="view hidden">
+        <div class="terminal-toolbar"><div id="terminal-tabs" class="terminal-tabs"></div><button id="new-terminal" class="toolbar-btn">＋ New terminal</button><button id="clear-terminal" class="toolbar-btn">Clear</button></div>
+        <div id="terminal-host" class="terminal-host"></div>
+        <footer class="statusbar"><span id="terminal-status">Terminal not started</span><span>Interactive local shell · xterm.js</span></footer>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><strong id="modal-title">Edit file</strong><button id="modal-close" class="ghost">✕</button></div><textarea id="editor" spellcheck="false"></textarea><div class="modal-actions"><span id="editor-status"></span><button id="save-file" class="primary">Save changes</button></div></div></div>
+  <div id="toast" class="toast"></div>
+</body>
+</html>
