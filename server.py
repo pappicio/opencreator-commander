@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """OpenCreator Commander: LAN-restricted file manager and SSH-account PTY."""
+import re
 import base64, fcntl, grp, hashlib, hmac, ipaddress, json, mimetypes
 import os, pwd, pty, select, shutil, signal, socket, struct, subprocess
 import termios, threading, time, urllib.parse, uuid, ctypes
