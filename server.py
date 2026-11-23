@@ -167,13 +167,24 @@ def verify_credentials(username, password):
         if account.pw_uid < 0 or account.pw_shell in ("/sbin/nologin", "/usr/sbin/nologin", "/bin/false"):
             return None
         shadow_hash = None
-        with open("/etc/shadow", "r") as f:
-            for line in f:
-                fields = line.rstrip("\n").split(":")
-                if fields and fields[0] == username and len(fields) > 1:
-                    shadow_hash = fields[1]
-                    break
-        if not shadow_hash or shadow_hash.startswith(("!", "*")):
+        shadow_entry_found = False
+
+        try:
+            with open("/etc/shadow", "r") as f:
+                for line in f:
+                    fields = line.rstrip("\n").split(":")
+                    if fields and fields[0] == username and len(fields) > 1:
+                        shadow_hash = fields[1]
+                        shadow_entry_found = True
+                        break
+        except OSError:
+            pass
+
+        # Some embedded firmware stores password hashes directly in /etc/passwd.
+        if not shadow_entry_found:
+            shadow_hash = account.pw_passwd
+
+        if not shadow_hash or shadow_hash.startswith(("!", "*", "x")):
             return None
         candidate = LIBCRYPT.crypt(password.encode(), shadow_hash.encode())
         if not candidate or not hmac.compare_digest(candidate.decode(), shadow_hash):
