@@ -62,6 +62,20 @@
   });
   restoreSavedCredentials();
 
+  // Restore an existing authenticated session after page reload.
+  (async function restoreSession() {
+    try {
+      await api('/api/session');
+      login.classList.add('hidden');
+      app.classList.remove('hidden');
+      await loadDirectory('/usr/data/opencreator/');
+      await loadUiSettings();
+    } catch (error) {
+      app.classList.add('hidden');
+      login.classList.remove('hidden');
+    }
+  })();
+
   // Persistent editor window: position and size are stored on the printer.
   const editorCard = document.querySelector('.modal-card');
   let editorGeometry = null;
