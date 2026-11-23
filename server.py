@@ -596,7 +596,7 @@ class Handler(BaseHTTPRequestHandler):
                         os.chdir(requested_cwd)
                     except OSError:
                         os.chdir(account.pw_dir or "/")
-                    env = os.environ.copy(); env.update({"TERM": "xterm-256color", "COLORTERM": "truecolor", "HOME": account.pw_dir, "USER": username, "LOGNAME": username})
+                    env = os.environ.copy(); env.update({"TERM": "xterm-256color", "COLORTERM": "truecolor", "HOME": account.pw_dir, "USER": username, "LOGNAME": username, "PS1": "\\u@\\h:\\w\\$ "})
                     shell = account.pw_shell if account.pw_shell and os.path.isfile(account.pw_shell) else "/bin/sh"
                     os.execvpe(shell, [shell, "-i"], env)
                 except Exception:
