@@ -19,15 +19,29 @@ The HTTP server binds to `0.0.0.0` so LAN devices can reach it, but every reques
 
 If the printer's LAN subnet changes, update `ALLOWED_NETWORKS` in `server.py` before deployment.
 
-## Install
+## Installation
 
-Install the ZIP with the OpenCreator Plugin Manager or `oc-plugin install` using the plugin ZIP. The plugin manager runs `install.sh`, then starts `bin/commander.sh` as a service.
+Install OpenCreator Commander directly through the OpenCreator Plugin Manager or via SSH:
 
-Open:
+```bash
+oc-plugin install https://github.com/pappicio/opencreator-commander.git
+```
 
-`http://<CREATOR-5-LAN-IP>:8766/`
+Once installation is complete, the plugin starts its web interface on port `8088`.
 
-The service must run as root so it can validate local shadow passwords and apply the authenticated account's filesystem credentials. It does **not** create an SSH server or require sshd to be enabled; it uses the local Linux account database and launches the account's shell directly.
+### Accessing the Web Interface
+
+Open a browser on any device connected to the same local network as the printer and navigate to:
+
+`http://PRINTER_IP:8088`
+
+Replace `PRINTER_IP` with the current IP address of your FlashForge Creator 5.
+
+For example:
+
+`http://192.168.1.194:8088`
+
+The server listens on all network interfaces, so `127.0.0.1` is only suitable when accessing the interface directly from the printer itself.
 
 ## Features
 
