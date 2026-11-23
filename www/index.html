@@ -35,6 +35,7 @@
     <nav class="main-tabs">
       <button class="main-tab active" data-view="explorer"><span>▤</span> Explorer</button>
       <button class="main-tab" data-view="terminal"><span>›_</span> Terminal</button>
+      <button class="main-tab" data-view="settings"><span>⚙</span> Settings</button>
     </nav>
     <main>
       <section id="explorer-view" class="view">
@@ -45,6 +46,7 @@
           <div class="path-wrap"><span>Path</span><input id="path" value="/" spellcheck="false"><button id="go-path">Go</button></div>
           <button id="new-folder" class="toolbar-btn">＋ New folder</button>
           <button id="upload" class="toolbar-btn primary">↑ Upload</button>
+          <button id="protect-selected" class="toolbar-btn protection-toolbar-btn" disabled title="Select a file or folder">RO Protect</button>
           <input id="file-input" type="file" multiple hidden>
         </div>
         <div class="explorer-content" id="drop-zone">
@@ -65,10 +67,77 @@
         <div id="terminal-host" class="terminal-host"></div>
         <footer class="statusbar"><span id="terminal-status">Terminal not started</span><span>Interactive local shell · xterm.js</span></footer>
       </section>
+
+      <section id="settings-view" class="view hidden">
+        <div class="settings-toolbar">
+          <div>
+            <strong>Commander Settings</strong>
+            <div class="settings-subtitle">Customize the appearance of OpenCreator Commander</div>
+          </div>
+          <div class="settings-actions">
+            <button id="settings-reset">Reset defaults</button>
+            <button id="settings-save" class="primary">Save settings</button>
+          </div>
+        </div>
+
+        <div class="settings-content">
+          <section class="settings-group">
+            <h3>File and folder colors</h3>
+            <p>Choose the colors used by the Explorer read/write indicators.</p>
+            <div class="settings-grid">
+              <label class="setting-row">
+                <span><strong>Read / Write (RW)</strong><small>Normal, writable items</small></span>
+                <input id="setting-color-rw" type="color" value="#91a0b2">
+              </label>
+              <label class="setting-row">
+                <span><strong>Read Only (RO)</strong><small>Custom protections</small></span>
+                <input id="setting-color-ro" type="color" value="#ffb15c">
+              </label>
+              <label class="setting-row">
+                <span><strong>System Read Only</strong><small>Protected system directories</small></span>
+                <input id="setting-color-system" type="color" value="#ff9f43">
+              </label>
+            </div>
+            <div class="settings-note">The permanent protection of app_startup.sh always remains red and cannot be changed here.</div>
+          </section>
+
+          <section class="settings-group">
+            <h3>Font sizes</h3>
+            <p>Adjust the interface text independently. Allowed range: 12–24 px.</p>
+            <div class="settings-grid">
+              <label class="setting-row">
+                <span><strong>General text</strong><small>Main interface text</small></span>
+                <span class="setting-range"><input id="setting-font-base" type="range" min="12" max="24" value="16"><output id="setting-font-base-value">16 px</output></span>
+              </label>
+              <label class="setting-row">
+                <span><strong>Labels</strong><small>Descriptions, headings and status text</small></span>
+                <span class="setting-range"><input id="setting-font-labels" type="range" min="12" max="24" value="14"><output id="setting-font-labels-value">14 px</output></span>
+              </label>
+              <label class="setting-row">
+                <span><strong>Buttons</strong><small>Toolbar and action buttons</small></span>
+                <span class="setting-range"><input id="setting-font-buttons" type="range" min="12" max="24" value="16"><output id="setting-font-buttons-value">16 px</output></span>
+              </label>
+            </div>
+          </section>
+
+          <div class="settings-preview">
+            <strong>Live preview</strong>
+            <div class="settings-preview-row">
+              <span class="protection-badge badge-rw">RW</span>
+              <span class="protection-badge badge-ro">RO</span>
+              <span class="protection-badge badge-system">RO</span>
+              <button>Sample button</button>
+            </div>
+            <span class="settings-preview-text">This is a preview of the current interface text.</span>
+          </div>
+        </div>
+        <footer class="statusbar"><span>Settings are stored on the printer</span><span id="settings-status">Unsaved changes</span></footer>
+      </section>
     </main>
   </div>
 
   <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><strong id="modal-title">Edit file</strong><button id="modal-close" class="ghost">✕</button></div><textarea id="editor" spellcheck="false"></textarea><div class="modal-actions"><span id="editor-status"></span><button id="save-file" class="primary">Save changes</button></div></div></div>
+  <div id="protection-menu" class="protection-menu hidden"></div>
   <div id="toast" class="toast"></div>
 </body>
 </html>

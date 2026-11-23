@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """OpenCreator Commander: LAN-restricted file manager and SSH-account PTY."""
-import base64, crypt, fcntl, grp, hashlib, hmac, ipaddress, json, mimetypes
+import base64, fcntl, grp, hashlib, hmac, ipaddress, json, mimetypes
 import os, pwd, pty, select, shutil, signal, socket, struct, subprocess
 import termios, threading, time, urllib.parse, uuid, ctypes
 from contextlib import contextmanager
+
+LIBCRYPT = ctypes.CDLL("libcrypt.so.1")
+LIBCRYPT.crypt.argtypes = (ctypes.c_char_p, ctypes.c_char_p)
+LIBCRYPT.crypt.restype = ctypes.c_char_p
+
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "www")
 CONFIG_PATH = "/usr/data/opencreator/commander/config.json"
+SETTINGS_PATH = "/usr/data/opencreator/commander/settings.json"
 LOG_PATH = "/tmp/opencreator-commander.log"
 MAX_UPLOAD = 512 * 1024 * 1024
 MAX_EDIT = 2 * 1024 * 1024
@@ -51,6 +57,98 @@ def safe_path(value):
     return os.path.abspath(os.path.normpath(value))
 
 
+PROTECTION_PATH = "/usr/data/opencreator/commander/protected.json"
+PERMANENT_ROOT = os.path.realpath("/usr/prog")
+PERMANENT_FILE = os.path.realpath("/usr/prog/app_startup.sh")
+_protection_lock = threading.RLock()
+
+
+def _is_inside(path, root):
+    try:
+        return os.path.commonpath((path, root)) == root
+    except (ValueError, OSError):
+        return False
+
+
+def _canonical(path):
+    return os.path.realpath(safe_path(path))
+
+
+def _load_protections():
+    try:
+        with open(PROTECTION_PATH, "r") as f:
+            values = json.load(f)
+        if not isinstance(values, list):
+            return set()
+        return {_canonical(x) for x in values if isinstance(x, str) and x}
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+_CUSTOM_PROTECTIONS = _load_protections()
+
+
+def _save_protections():
+    old_uid = _libc.setfsuid(ctypes.c_uint(0))
+    temp = PROTECTION_PATH + ".tmp-" + uuid.uuid4().hex
+    try:
+        with open(temp, "w") as f:
+            json.dump(sorted(_CUSTOM_PROTECTIONS), f, indent=2)
+            f.write("\\n")
+        os.chmod(temp, 0o600)
+        os.replace(temp, PROTECTION_PATH)
+    finally:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        _libc.setfsuid(ctypes.c_uint(old_uid))
+
+
+def protection_info(path):
+    target = _canonical(path)
+    permanent_file = target == PERMANENT_FILE
+    matching_root = next((root for root in _CUSTOM_PROTECTIONS if _is_inside(target, root)), None)
+    custom = matching_root is not None
+    return {
+        "protected": permanent_file or custom,
+        "permanent": permanent_file,
+        "system": permanent_file,
+        "custom": custom,
+        "custom_root": matching_root == target,
+    }
+
+
+def ensure_mutable(path, include_ancestors=False):
+    target = _canonical(path)
+
+    if target == PERMANENT_FILE:
+        raise PermissionError("This system file is permanently protected")
+    if include_ancestors and _is_inside(PERMANENT_FILE, target):
+        raise PermissionError("This operation would affect a permanently protected system file")
+
+    for root in _CUSTOM_PROTECTIONS:
+        if _is_inside(target, root):
+            raise PermissionError("This path is protected in OpenCreator Commander")
+        if include_ancestors and _is_inside(root, target):
+            raise PermissionError("This operation would affect a protected path")
+
+
+def set_custom_protection(path, enabled):
+    target = _canonical(path)
+    if target == "/":
+        raise ValueError("The filesystem root cannot be protected")
+    if target == PERMANENT_FILE:
+        raise PermissionError("This system file is permanently protected")
+
+    with _protection_lock:
+        if enabled:
+            _CUSTOM_PROTECTIONS.add(target)
+        else:
+            _CUSTOM_PROTECTIONS.discard(target)
+        _save_protections()
+
+
 def cookie_value(header, name):
     for item in (header or "").split(";"):
         if "=" in item:
@@ -77,8 +175,8 @@ def verify_credentials(username, password):
                     break
         if not shadow_hash or shadow_hash.startswith(("!", "*")):
             return None
-        candidate = crypt.crypt(password, shadow_hash)
-        if not candidate or not hmac.compare_digest(candidate, shadow_hash):
+        candidate = LIBCRYPT.crypt(password.encode(), shadow_hash.encode())
+        if not candidate or not hmac.compare_digest(candidate.decode(), shadow_hash):
             return None
         return account
     except (KeyError, OSError, ValueError, TypeError):
@@ -229,6 +327,31 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/ws/terminal": return self.handle_terminal_ws()
         user = self.require_auth()
         if not user: return
+        if path == "/api/settings":
+            defaults = {
+                "color_rw": "#91a0b2",
+                "color_ro": "#ffb15c",
+                "color_system": "#ff9f43",
+                "font_base": 16,
+                "font_labels": 14,
+                "font_buttons": 16,
+            }
+            try:
+                with open(SETTINGS_PATH, "r") as f:
+                    stored = json.load(f)
+                if isinstance(stored, dict):
+                    defaults.update({k: v for k, v in stored.items() if k in defaults})
+            except (OSError, ValueError, TypeError):
+                pass
+            return self.send_json(200, {"settings": defaults})
+        if path == "/api/editor-window":
+            try:
+                config_path = "/usr/data/opencreator/commander/editor-window.json"
+                with open(config_path, "r") as f:
+                    geometry = json.load(f)
+                return self.send_json(200, {"geometry": geometry})
+            except (OSError, ValueError, TypeError):
+                return self.send_json(200, {"geometry": None})
         try:
             with as_user(user):
                 if path == "/api/fs/list": return self.fs_list(query.get("path", ["/"])[0])
@@ -264,26 +387,98 @@ class Handler(BaseHTTPRequestHandler):
         if not user: return
         try:
             data = json.loads(self.read_body(1024 * 1024).decode("utf-8"))
+
+            if parsed.path == "/api/settings":
+                defaults = {
+                    "color_rw": "#91a0b2",
+                    "color_ro": "#ffb15c",
+                    "color_system": "#ff9f43",
+                    "font_base": 16,
+                    "font_labels": 14,
+                    "font_buttons": 16,
+                }
+                settings = {}
+                for key in ("color_rw", "color_ro", "color_system"):
+                    value = str(data.get(key, defaults[key]))
+                    if not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+                        raise ValueError("Invalid color value")
+                    settings[key] = value
+                for key in ("font_base", "font_labels", "font_buttons"):
+                    value = int(data.get(key, defaults[key]))
+                    if not 12 <= value <= 24:
+                        raise ValueError("Font size must be between 12 and 24")
+                    settings[key] = value
+
+                temp_path = SETTINGS_PATH + ".tmp"
+                with open(temp_path, "w") as f:
+                    json.dump(settings, f, indent=2)
+                    f.write("\\n")
+                os.chmod(temp_path, 0o600)
+                os.replace(temp_path, SETTINGS_PATH)
+                return self.send_json(200, {"ok": True, "settings": settings})
+
+            if parsed.path == "/api/editor-window":
+                geometry = data.get("geometry")
+                if not isinstance(geometry, dict):
+                    raise ValueError("Invalid editor window geometry")
+
+                values = {}
+                for key in ("x", "y", "width", "height"):
+                    value = float(geometry[key])
+                    if not (-10000 <= value <= 10000):
+                        raise ValueError("Editor window geometry out of range")
+                    values[key] = round(value)
+
+                if values["width"] < 420 or values["height"] < 300:
+                    raise ValueError("Editor window is too small")
+
+                config_path = "/usr/data/opencreator/commander/editor-window.json"
+                temp_path = config_path + ".tmp"
+                with open(temp_path, "w") as f:
+                    json.dump(values, f)
+                    f.write("\\n")
+                os.chmod(temp_path, 0o600)
+                os.replace(temp_path, config_path)
+                return self.send_json(200, {"ok": True})
+
+            if parsed.path in ("/api/fs/protect", "/api/fs/unprotect"):
+                target = data.get("path", "")
+                if not target:
+                    raise ValueError("Missing path")
+                set_custom_protection(target, parsed.path == "/api/fs/protect")
+                return self.send_json(200, {"ok": True, "protection": protection_info(target)})
+
             with as_user(user):
                 if parsed.path == "/api/fs/mkdir":
                     parent = safe_path(data.get("path", "/")); name = os.path.basename(str(data.get("name", "")))
                     if not name or name in (".", ".."): raise ValueError("Invalid directory name")
+                    ensure_mutable(parent)
+                    ensure_mutable(os.path.join(parent, name))
                     os.mkdir(os.path.join(parent, name)); return self.send_json(200, {"ok": True})
                 if parsed.path == "/api/fs/rename":
                     source = safe_path(data.get("path", "")); name = os.path.basename(str(data.get("name", "")))
                     if not name or name in (".", ".."): raise ValueError("Invalid name")
-                    os.rename(source, os.path.join(os.path.dirname(source), name)); return self.send_json(200, {"ok": True})
+                    destination = os.path.join(os.path.dirname(source), name)
+                    ensure_mutable(source, include_ancestors=True)
+                    ensure_mutable(destination)
+                    os.rename(source, destination); return self.send_json(200, {"ok": True})
                 if parsed.path == "/api/fs/delete":
                     target = safe_path(data.get("path", ""))
                     if target == "/": raise ValueError("Refusing to delete filesystem root")
+                    ensure_mutable(target, include_ancestors=True)
                     if os.path.isdir(target) and not os.path.islink(target): shutil.rmtree(target)
                     else: os.unlink(target)
                     return self.send_json(200, {"ok": True})
                 if parsed.path == "/api/fs/move":
                     source = safe_path(data.get("source", "")); dest = safe_path(data.get("destination", "/"))
-                    os.rename(source, os.path.join(dest, os.path.basename(source))); return self.send_json(200, {"ok": True})
+                    destination = os.path.join(dest, os.path.basename(source))
+                    ensure_mutable(source, include_ancestors=True)
+                    ensure_mutable(dest)
+                    ensure_mutable(destination)
+                    os.rename(source, destination); return self.send_json(200, {"ok": True})
                 if parsed.path == "/api/fs/chmod":
                     target = safe_path(data.get("path", "")); mode = int(str(data.get("mode", "644")), 8)
+                    ensure_mutable(target, include_ancestors=True)
                     os.chmod(target, mode); return self.send_json(200, {"ok": True})
         except Exception as exc: return self.send_json(400, {"error": str(exc)})
         self.send_json(404, {"error": "Not found"})
@@ -300,7 +495,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not name or name in (".", ".."): raise ValueError("Invalid filename")
                     length = int(self.headers.get("Content-Length", "0"))
                     if length < 0 or length > MAX_UPLOAD: raise ValueError("Upload exceeds the 512 MB limit")
-                    destination = os.path.join(directory, name); temp = destination + ".oc-upload-" + uuid.uuid4().hex
+                    destination = os.path.join(directory, name)
+                    ensure_mutable(directory)
+                    ensure_mutable(destination)
+                    temp = destination + ".oc-upload-" + uuid.uuid4().hex
                     remaining = length
                     try:
                         with open(temp, "wb") as f:
@@ -316,6 +514,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(200, {"ok": True, "size": length})
                 if parsed.path == "/api/fs/write":
                     target = safe_path(query.get("path", [""])[0]); body = self.read_body(MAX_EDIT).decode("utf-8")
+                    ensure_mutable(target, include_ancestors=True)
                     with open(target, "w", encoding="utf-8") as f: f.write(body)
                     return self.send_json(200, {"ok": True})
         except Exception as exc: return self.send_json(400, {"error": str(exc)})
@@ -339,10 +538,11 @@ class Handler(BaseHTTPRequestHandler):
             full = os.path.join(path, name)
             try:
                 st = os.lstat(full); link = os.path.islink(full); directory = os.path.isdir(full)
-                items.append({"name": name, "path": full, "type": "symlink" if link else ("directory" if directory else "file"), "size": int(st.st_size), "mtime": int(st.st_mtime), "mode": format(st.st_mode & 0o777, "04o")})
+                info = protection_info(full)
+                items.append({"name": name, "path": full, "type": "symlink" if link else ("directory" if directory else "file"), "size": int(st.st_size), "mtime": int(st.st_mtime), "mode": format(st.st_mode & 0o777, "04o"), **info})
             except OSError: continue
         items.sort(key=lambda x: (x["type"] != "directory", x["name"].lower()))
-        return self.send_json(200, {"path": path, "parent": os.path.dirname(path.rstrip("/")) or "/", "items": items})
+        return self.send_json(200, {"path": path, "parent": os.path.dirname(path.rstrip("/")) or "/", "items": items, "protection": protection_info(path)})
 
     def fs_download(self, raw_path):
         path = safe_path(raw_path)
@@ -359,7 +559,7 @@ class Handler(BaseHTTPRequestHandler):
     def fs_read(self, raw_path):
         path = safe_path(raw_path)
         if os.path.getsize(path) > MAX_EDIT: return self.send_json(400, {"error": "File is larger than the 2 MB editor limit"})
-        with open(path, "r", encoding="utf-8") as f: return self.send_json(200, {"path": path, "content": f.read()})
+        with open(path, "r", encoding="utf-8") as f: return self.send_json(200, {"path": path, "content": f.read(), "protection": protection_info(path)})
 
     def handle_terminal_ws(self):
         username = self.username()
@@ -373,10 +573,17 @@ class Handler(BaseHTTPRequestHandler):
         sock = self.connection; sock.settimeout(0.15); pid = master = None
         try:
             account = pwd.getpwnam(username)
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            cwd_value = query.get("cwd", [account.pw_dir or "/"])[0]
+            requested_cwd = os.path.abspath(os.path.normpath(cwd_value if cwd_value.startswith("/") else "/" + cwd_value))
             pid, master = pty.fork()
             if pid == 0:
                 try:
                     os.initgroups(username, account.pw_gid); os.setgid(account.pw_gid); os.setuid(account.pw_uid)
+                    try:
+                        os.chdir(requested_cwd)
+                    except OSError:
+                        os.chdir(account.pw_dir or "/")
                     env = os.environ.copy(); env.update({"TERM": "xterm-256color", "COLORTERM": "truecolor", "HOME": account.pw_dir, "USER": username, "LOGNAME": username})
                     shell = account.pw_shell if account.pw_shell and os.path.isfile(account.pw_shell) else "/bin/sh"
                     os.execvpe(shell, [shell, "-i"], env)
