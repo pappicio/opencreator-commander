@@ -223,11 +223,31 @@ OpenCreator Commander follows a few important principles:
 
 ## Installation
 
+Install OpenCreator Commander directly through the OpenCreator Plugin Manager or via SSH:
+
+```bash
+oc-plugin install https://github.com/pappicio/opencreator-commander.git
+```
+
+Once installation is complete, the plugin starts its web interface on port `8088`.
+
+### Accessing the Web Interface
+
+Open a browser on any device connected to the same local network as the printer and navigate to:
+
+`http://PRINTER_IP:8088`
+
+Replace `PRINTER_IP` with the current IP address of your FlashForge Creator 5.
+
+For example:
+
+`http://192.168.1.194:8088`
+
+The server listens on all network interfaces, so `127.0.0.1` is only suitable when accessing the interface directly from the printer itself.
+
 OpenCreator Commander is designed to run as an OpenCreator plugin on the FlashForge Creator 5.
 
 The plugin uses the printer's local filesystem and runs its own web interface and backend service.
-
-Default web interface port: **8088**.
 
 ---
 
