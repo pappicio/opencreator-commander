@@ -369,6 +369,12 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/fs/list": return self.fs_list(query.get("path", ["/"])[0])
                 if path == "/api/fs/download": return self.fs_download(query.get("path", [""])[0])
                 if path == "/api/fs/read": return self.fs_read(query.get("path", [""])[0])
+                if path == "/api/fs/media": return self.fs_media(query.get("path", [""])[0])
+                if path == "/api/fs/hex": return self.fs_hex(
+                    query.get("path", [""])[0],
+                    query.get("offset", ["0"])[0],
+                    query.get("length", ["4096"])[0]
+                )
         except Exception as exc: return self.send_json(403, {"error": str(exc)})
         self.send_json(404, {"error": "Not found"})
 
@@ -567,6 +573,94 @@ class Handler(BaseHTTPRequestHandler):
                 chunk = f.read(65536)
                 if not chunk: break
                 self.wfile.write(chunk)
+
+    def fs_media(self, raw_path):
+        """Stream media files with HTTP byte-range support."""
+        path = safe_path(raw_path)
+        if not os.path.isfile(path):
+            return self.send_json(400, {"error": "Not a regular file"})
+
+        size = os.path.getsize(path)
+        content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        range_header = self.headers.get("Range")
+        start, end = 0, size - 1
+        status = 200
+
+        if range_header:
+            try:
+                unit, value = range_header.split("=", 1)
+                if unit.strip().lower() != "bytes" or "," in value:
+                    raise ValueError("Unsupported range")
+                first, last = value.strip().split("-", 1)
+                if first:
+                    start = int(first)
+                    end = int(last) if last else size - 1
+                else:
+                    suffix = int(last)
+                    if suffix <= 0:
+                        raise ValueError("Invalid suffix range")
+                    start = max(0, size - suffix)
+                    end = size - 1
+                if start >= size or end < start:
+                    raise ValueError("Range not satisfiable")
+                end = min(end, size - 1)
+                status = 206
+            except (ValueError, TypeError):
+                self.send_response(416)
+                self.send_header("Content-Range", "bytes */%d" % size)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+        length = max(0, end - start + 1)
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(length))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if status == 206:
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+        self.end_headers()
+
+        with open(path, "rb") as stream:
+            stream.seek(start)
+            remaining = length
+            while remaining:
+                chunk = stream.read(min(65536, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
+    def fs_hex(self, raw_path, raw_offset="0", raw_length="4096"):
+        """Read a bounded binary block for the HEX viewer."""
+        path = safe_path(raw_path)
+        if not os.path.isfile(path):
+            return self.send_json(400, {"error": "Not a regular file"})
+
+        try:
+            offset = max(0, int(raw_offset))
+            length = max(1, min(4096, int(raw_length)))
+        except (ValueError, TypeError):
+            return self.send_json(400, {"error": "Invalid HEX range"})
+
+        size = os.path.getsize(path)
+        if offset > size:
+            return self.send_json(416, {"error": "Offset is beyond end of file", "size": size})
+
+        with open(path, "rb") as stream:
+            stream.seek(offset)
+            block = stream.read(length)
+
+        return self.send_json(200, {
+            "path": path,
+            "size": size,
+            "offset": offset,
+            "length": len(block),
+            "hex": block.hex(),
+            "ascii": "".join(chr(byte) if 32 <= byte <= 126 else "." for byte in block)
+        })
 
     def fs_read(self, raw_path):
         path = safe_path(raw_path)

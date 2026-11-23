@@ -348,8 +348,8 @@
     try {
       const data = await api('/api/fs/list?path=' + encodeURIComponent(path));
       const normalizedPath = String(data.path || path).replace(/\/+$/, '') || '/';
-      if (normalizedPath === '/usr/prog' && !state.warnedProgramDir) {
-        state.warnedProgramDir = true;
+      const previousPath = String(state.path || '').replace(/\/+$/, '') || '/';
+      if (normalizedPath === '/usr/prog' && previousPath !== '/usr/prog') {
         alert('SYSTEM PROTECTION: /usr/prog contains critical printer startup files. This directory is permanently read-only in OpenCreator Commander.');
       }
       state.path = data.path;
@@ -409,7 +409,7 @@
     name.addEventListener('dblclick', () =>
       item.type === 'directory'
         ? navigate(item.path)
-        : openEditor(item.path, !!item.protected)
+        : openFile(item.path, !!item.protected)
     );
 
     name.addEventListener('click', () => {
@@ -444,18 +444,38 @@
 
     if (item.type === 'directory') addAction(actionWrap, 'Open', () => navigate(item.path));
     else {
-      if (!item.protected) addAction(actionWrap, 'Edit', () => openEditor(item.path, false));
+      addAction(actionWrap, 'Open', () => openFile(item.path, !!item.protected));
       addAction(actionWrap, 'Download', () => downloadFile(item.path));
+    }
+
+    {
+      const permanent = !!item.permanent || item.path === '/usr/prog/app_startup.sh';
+      const canChangeProtection = !permanent && !item.system && (!item.protected || !!item.custom_root);
+      const protectionButton = document.createElement('button');
+
+      protectionButton.textContent = permanent || item.system
+        ? 'RO System'
+        : item.custom_root ? 'Unprotect' : 'Protect';
+
+      protectionButton.disabled = !canChangeProtection;
+      protectionButton.title = permanent || item.system
+        ? 'Permanent system protection'
+        : item.custom_root
+          ? 'Remove custom read-only protection'
+          : item.protected
+            ? 'Protection is inherited and cannot be removed here'
+            : 'Protect selected item and its contents';
+
+      protectionButton.addEventListener('click', () => {
+        if (canChangeProtection) changeProtection(item.path, !item.custom_root);
+      });
+
+      actionWrap.append(protectionButton);
     }
 
     if (!item.protected) {
       addAction(actionWrap, 'Rename', () => renameItem(item.path, item.name));
       addAction(actionWrap, 'Delete', () => deleteItem(item.path, item.name, item.type));
-    }
-
-    if (!item.system && !item.permanent) {
-      if (item.custom_root) addAction(actionWrap, 'Remove protection', () => changeProtection(item.path, false));
-      else if (!item.protected) addAction(actionWrap, 'Protect', () => changeProtection(item.path, true));
     }
 
     actions.append(actionWrap);
@@ -467,7 +487,7 @@
       row.classList.add('selected');
       state.selectedItem = item;
       updateProtectionToolbar();
-      showProtectionMenu(item, event.clientX, event.clientY);
+      showContextMenu(item, event.clientX, event.clientY);
     });
 
     return row;
@@ -510,38 +530,45 @@
     if (menu) menu.classList.add('hidden');
   }
 
-  function showProtectionMenu(item, x, y) {
+  function showContextMenu(item, x, y) {
     const menu = $('protection-menu');
     menu.replaceChildren();
 
-    let label = 'Protect read-only';
-    let enabled = true;
-    let enableProtection = true;
+    const addMenuItem = (label, callback, disabled = false, separator = false) => {
+      if (separator) {
+        const line = document.createElement('div');
+        line.className = 'context-menu-separator';
+        menu.append(line);
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.disabled = disabled;
+      button.addEventListener('click', () => {
+        hideProtectionMenu();
+        callback();
+      });
+      menu.append(button);
+    };
 
-    if (item.system || item.permanent) {
-      label = 'System protected';
-      enabled = false;
-      enableProtection = false;
-    } else if (item.custom_root) {
-      label = 'Remove read-only protection';
-      enableProtection = false;
-    } else if (item.protected) {
-      label = 'Read-only (inherited)';
-      enabled = false;
-      enableProtection = false;
+    const folder = item.type === 'directory';
+    const mutable = !item.protected && !item.system && !item.permanent;
+
+    if (folder) {
+      addMenuItem('Open', () => navigate(item.path));
+    } else {
+      addMenuItem('Open', () => openFile(item.path));
+      addMenuItem('Open as Image', () => openMediaViewer(item.path, 'image'));
+      addMenuItem('Open as Video', () => openMediaViewer(item.path, 'video'));
+      addMenuItem('Open as Text', () => openEditor(item.path, !!item.protected));
+      addMenuItem('Open as Raw (HEX)', () => openRawViewer(item.path));
+      addMenuItem('Download', () => downloadFile(item.path), false, true);
     }
 
-    const button = document.createElement('button');
-    button.textContent = label;
-    button.disabled = !enabled;
-    button.addEventListener('click', () => {
-      hideProtectionMenu();
-      changeProtection(item.path, enableProtection);
-    });
+    addMenuItem('Rename', () => renameItem(item.path, item.name), !mutable, true);
+    addMenuItem('Delete', () => deleteItem(item.path, item.name, item.type), !mutable);
 
-    menu.append(button);
     menu.classList.remove('hidden');
-
     const left = Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8));
     const top = Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8));
     menu.style.left = left + 'px';
@@ -638,6 +665,166 @@
   ['dragleave','drop'].forEach(event => dropZone.addEventListener(event, e => { e.preventDefault(); if (event === 'drop' || !dropZone.contains(e.relatedTarget)) dropZone.classList.remove('dragging'); }));
   dropZone.addEventListener('drop', e => uploadFiles(Array.from(e.dataTransfer.files || [])));
 
+  function mediaUrl(path) {
+    return '/api/fs/media?path=' + encodeURIComponent(path);
+  }
+
+  function showViewer(title, status) {
+    $('modal-title').textContent = title;
+    $('editor').classList.add('hidden');
+    $('media-viewer').classList.remove('hidden');
+    $('save-file').classList.add('hidden');
+    $('editor-status').textContent = status || '';
+    $('modal').classList.remove('hidden');
+    prepareEditorWindow();
+  }
+
+  async function openMediaViewer(path, kind) {
+    const host = $('media-viewer');
+    host.replaceChildren();
+    $('editor').classList.add('hidden');
+    $('editor').readOnly = true;
+    $('save-file').classList.add('hidden');
+
+    const heading = document.createElement('div');
+    heading.className = 'viewer-heading';
+    heading.textContent = path;
+    host.append(heading);
+
+    if (kind === 'image') {
+      const image = document.createElement('img');
+      image.className = 'image-preview';
+      image.alt = path.split('/').pop();
+      image.src = mediaUrl(path);
+      image.addEventListener('error', () => {
+        $('editor-status').textContent = 'This image format is not supported by the browser.';
+      });
+      host.append(image);
+      showViewer(path + ' · IMAGE', 'Image preview · Browser-supported formats');
+    } else {
+      const video = document.createElement('video');
+      video.className = 'video-preview';
+      video.controls = true;
+      video.preload = 'metadata';
+      video.playsInline = true;
+      video.src = mediaUrl(path);
+      video.addEventListener('error', () => {
+        $('editor-status').textContent = 'This video or codec is not supported by the browser.';
+      });
+      host.append(video);
+      showViewer(path + ' · VIDEO', 'Video · Native browser playback · HTTP byte-range streaming');
+    }
+  }
+
+  async function openRawViewer(path, initialOffset = 0) {
+    const host = $('media-viewer');
+    host.replaceChildren();
+    $('editor').classList.add('hidden');
+    $('save-file').classList.add('hidden');
+
+    const heading = document.createElement('div');
+    heading.className = 'viewer-heading';
+    heading.textContent = path;
+    host.append(heading);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'hex-toolbar';
+
+    const previous = document.createElement('button');
+    previous.textContent = 'Previous block';
+    const next = document.createElement('button');
+    next.textContent = 'Next block';
+    const offsetInput = document.createElement('input');
+    offsetInput.type = 'number';
+    offsetInput.min = '0';
+    offsetInput.step = '16';
+    offsetInput.value = String(initialOffset);
+    offsetInput.setAttribute('aria-label', 'Byte offset');
+    const go = document.createElement('button');
+    go.textContent = 'Go';
+    const search = document.createElement('input');
+    search.placeholder = 'Find ASCII in current block';
+    search.setAttribute('aria-label', 'Search current block');
+    const searchButton = document.createElement('button');
+    searchButton.textContent = 'Find';
+
+    toolbar.append(previous, next, offsetInput, go, search, searchButton);
+    host.append(toolbar);
+
+    const info = document.createElement('div');
+    info.className = 'hex-info';
+    host.append(info);
+
+    const output = document.createElement('pre');
+    output.className = 'hex-output';
+    host.append(output);
+
+    let currentOffset = Math.max(0, Number(initialOffset) || 0);
+    let fileSize = 0;
+
+    async function loadBlock(offset) {
+      try {
+        const result = await api('/api/fs/hex?path=' + encodeURIComponent(path) +
+          '&offset=' + encodeURIComponent(offset) + '&length=4096');
+        currentOffset = result.offset;
+        fileSize = result.size;
+        offsetInput.value = String(currentOffset);
+        info.textContent = 'Size: ' + formatSize(fileSize) +
+          ' · Offset: 0x' + currentOffset.toString(16).toUpperCase() +
+          ' (' + currentOffset + ') · ' + result.length + ' bytes';
+
+        const lines = [];
+        for (let i = 0; i < result.length; i += 16) {
+          const hex = result.hex.slice(i * 2, (i + 16) * 2);
+          const bytes = hex.match(/.{1,2}/g) || [];
+          const ascii = result.ascii.slice(i, i + 16);
+          const offsetText = (currentOffset + i).toString(16).toUpperCase().padStart(8, '0');
+          lines.push(offsetText + '  ' +
+            bytes.join(' ').padEnd(47, ' ') + '  ' + ascii);
+        }
+        output.textContent = lines.join('\n') || '(Empty file)';
+      } catch (error) {
+        output.textContent = 'Unable to read this block: ' + error.message;
+      }
+    }
+
+    previous.addEventListener('click', () => loadBlock(Math.max(0, currentOffset - 4096)));
+    next.addEventListener('click', () => {
+      if (currentOffset + 4096 < fileSize) loadBlock(currentOffset + 4096);
+    });
+    go.addEventListener('click', () => loadBlock(Math.max(0, Number(offsetInput.value) || 0)));
+    offsetInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') loadBlock(Math.max(0, Number(offsetInput.value) || 0));
+    });
+    searchButton.addEventListener('click', () => {
+      const needle = search.value;
+      if (!needle) return;
+      const index = output.textContent.toLowerCase().indexOf(needle.toLowerCase());
+      info.textContent = index >= 0
+        ? 'Text found in the displayed block.'
+        : 'Text not found in the displayed block.';
+    });
+
+    await loadBlock(currentOffset);
+    showViewer(path + ' · RAW HEX', 'Read-only binary viewer · 4 KB blocks');
+  }
+
+  function openFile(path, protectedFile = false) {
+    const ext = path.split('.').pop().toLowerCase();
+    const images = ['jpg','jpeg','png','gif','webp','bmp','svg','ico','avif','apng','tif','tiff'];
+    const videos = ['mp4','m4v','mov','webm','ogv','ogg','mkv','avi','mpeg','mpg','m2v','3gp','ts'];
+    const text = [
+      'txt','log','cfg','conf','ini','json','js','mjs','cjs','css','html','htm',
+      'xml','yaml','yml','toml','py','sh','bash','zsh','md','csv','tsv','sql',
+      'c','h','cpp','hpp','rs','go','java','properties','service','socket'
+    ];
+
+    if (images.includes(ext)) return openMediaViewer(path, 'image');
+    if (videos.includes(ext)) return openMediaViewer(path, 'video');
+    if (text.includes(ext)) return openEditor(path, protectedFile);
+    return openRawViewer(path);
+  }
+
   async function openEditor(path, protectedFile = false) {
     try {
       const data = await api('/api/fs/read?path=' + encodeURIComponent(path));
@@ -653,6 +840,9 @@
         alert('PERMANENT SYSTEM PROTECTION: app_startup.sh is a critical printer startup file. It can only be viewed, never modified through Commander.');
       }
 
+      $('media-viewer').classList.add('hidden');
+      $('editor').classList.remove('hidden');
+      $('save-file').classList.remove('hidden');
       $('modal-title').textContent = permanent
         ? (data.path || path) + ' · READ ONLY · SYSTEM FILE'
         : (data.path || path) + (isProtected ? ' · READ ONLY' : '');
@@ -668,7 +858,11 @@
   }
   $('modal-close').addEventListener('click', () => {
     $('modal').classList.add('hidden');
+    $('editor').classList.remove('hidden');
+    $('media-viewer').classList.add('hidden');
+    $('media-viewer').replaceChildren();
     $('editor').readOnly = false;
+    $('save-file').classList.remove('hidden');
     $('save-file').disabled = false;
     state.editPath = null; state.editProtected = false;
   });
