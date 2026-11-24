@@ -21,7 +21,7 @@
   function lockApp() {
     state.terminals.forEach(t => { try { t.ws && t.ws.close(); } catch (_) {} });
     state.terminals = []; state.activeTerminal = null;
-    app.classList.add('hidden'); login.classList.remove('hidden'); $('password').value = '';
+    app.classList.add('hidden'); login.classList.remove('hidden'); restoreSavedCredentials();
   }
   function restoreSavedCredentials() {
     const username = localStorage.getItem('oc_commander_username') || '';
